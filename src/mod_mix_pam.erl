@@ -32,12 +32,16 @@
 	 disco_sm_features/5,
 	 remove_user/2,
 	 process_iq/1,
-	 get_mix_roster_items/2]).
+	 get_mix_roster_items/2,
+	 webadmin_user/4,
+	 webadmin_page/3]).
 
 -include_lib("xmpp/include/xmpp.hrl").
 -include("logger.hrl").
 -include("mod_roster.hrl").
 -include("translate.hrl").
+-include("ejabberd_http.hrl").
+-include("ejabberd_web_admin.hrl").
 
 -define(MIX_PAM_CACHE, mix_pam_cache).
 
@@ -64,6 +68,8 @@ start(Host, Opts) ->
 	    ejabberd_hooks:add(disco_sm_features, Host, ?MODULE, disco_sm_features, 50),
 	    ejabberd_hooks:add(remove_user, Host, ?MODULE, remove_user, 50),
 	    ejabberd_hooks:add(roster_get, Host, ?MODULE, get_mix_roster_items, 50),
+	    ejabberd_hooks:add(webadmin_user, Host, ?MODULE, webadmin_user, 50),
+	    ejabberd_hooks:add(webadmin_page_host, Host, ?MODULE, webadmin_page, 50),
 	    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_MIX_PAM_0,
 					  ?MODULE, process_iq);
 	Err ->
@@ -75,6 +81,8 @@ stop(Host) ->
     ejabberd_hooks:delete(disco_sm_features, Host, ?MODULE, disco_sm_features, 50),
     ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
     ejabberd_hooks:delete(roster_get, Host, ?MODULE, get_mix_roster_items, 50),
+    ejabberd_hooks:delete(webadmin_user, Host, ?MODULE, webadmin_user, 50),
+    ejabberd_hooks:delete(webadmin_page_host, Host, ?MODULE, webadmin_page, 50),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_MIX_PAM_0).
 
 reload(Host, NewOpts, OldOpts) ->
@@ -430,3 +438,55 @@ delete_cache(Mod, JID, Channel) ->
 	false ->
 	    ok
     end.
+
+%%%===================================================================
+%%% Webadmin interface
+%%%===================================================================
+webadmin_user(Acc, User, Server, Lang) ->
+    QueueLen = case get_channels({jid:nodeprep(User), jid:nameprep(Server), <<>>}) of
+	{ok, Channels} -> length(Channels);
+	error -> -1
+    end,
+    FQueueLen = ?C(integer_to_binary(QueueLen)),
+    FQueueView = ?AC(<<"mix_channels/">>, ?T("View joined MIX channels")),
+    Acc ++
+        [?XCT(<<"h3">>, ?T("Joined MIX channels:")),
+         FQueueLen,
+         ?C(<<"  |   ">>),
+         FQueueView].
+
+webadmin_page(_, Host,
+              #request{us = _US, path = [<<"user">>, U, <<"mix_channels">>],
+                       lang = Lang} = _Request) ->
+    Res = web_mix_channels(U, Host, Lang),
+    {stop, Res};
+webadmin_page(Acc, _, _) -> Acc.
+
+web_mix_channels(User, Server, Lang) ->
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    US = {LUser, LServer},
+    Items = case get_channels({jid:nodeprep(User), jid:nameprep(Server), <<>>}) of
+	{ok, Channels} -> Channels;
+	error -> []
+    end,
+    SItems = lists:sort(Items),
+    FItems = case SItems of
+        [] -> [?CT(?T("None"))];
+        _ ->
+	    THead = ?XE(<<"thead">>, [?XE(<<"tr">>, [?XCT(<<"td">>, ?T("Channel JID")),
+						     ?XCT(<<"td">>, ?T("Participant ID"))])]),
+	    Entries = lists:map(fun ({JID, ID}) ->
+				    ?XE(<<"tr">>, [
+					?XAC(<<"td">>, [{<<"class">>, <<"valign">>}], jid:encode(JID)),
+					?XAC(<<"td">>, [{<<"class">>, <<"valign">>}], ID)
+				    ])
+				end, SItems),
+	    [?XE(<<"table">>, [THead, ?XE(<<"tbody">>, Entries)])]
+    end,
+    PageTitle = str:translate_and_format(Lang, ?T("Joined MIX channels of ~ts"), [us_to_list(US)]),
+    (?H1GL(PageTitle, <<"modules/#mod-mix-pam">>, <<"mod_mix_pam">>))
+        ++ FItems.
+
+us_to_list({User, Server}) ->
+    jid:encode({User, Server, <<"">>}).
