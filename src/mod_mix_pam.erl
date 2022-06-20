@@ -295,6 +295,15 @@ process_join_result(#iq{from = Channel,
 	ok ->
 	    ChanID = make_channel_id(Channel, ID),
 	    Join1 = Join#mix_join{id = <<"">>, jid = ChanID},
+	    mod_roster:push_item(To, #roster{}, #roster{
+                        jid = Channel, % fixme
+                        name = <<>>,
+                        subscription = none,
+                        ask = none,
+                        groups = [],
+                        askmessage = <<>>,
+                        mix_participant_id = ID
+                    }),
 	    ResIQ = xmpp:make_iq_result(IQ, #mix_client_join{join = Join1}),
 	    ejabberd_router:route(ResIQ);
 	{error, db_failure} ->
