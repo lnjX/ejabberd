@@ -500,6 +500,7 @@ process_mix_message(#message{from = From, to = To,
     Mod = gen_mod:db_mod(ServerHost, ?MODULE),
     case Mod:get_channel(ServerHost, Chan, Host) of
 	{ok, _} ->
+	    ChannelJid = jid:remove_resource(To),
 	    BFrom = jid:remove_resource(From),
 	    case Mod:get_participant(ServerHost, Chan, Host, BFrom) of
 		{ok, {StableID, Nick}} ->
@@ -509,7 +510,10 @@ process_mix_message(#message{from = From, to = To,
 					 to = undefined,
 					 id = integer_to_binary(MamID)},
 			     #mix{jid = BFrom, nick = Nick}),
-		    Msg2 = xmpp:put_meta(Msg1, stanza_id, MamID),
+		    % add <stanza-id/> tag and set MAM ID in metadata
+		    Msg2 = xmpp:set_subtag(
+			    xmpp:put_meta(Msg1, stanza_id, MamID),
+			    #stanza_id{by = ChannelJid, id = integer_to_binary(MamID)}),
 		    case ejabberd_hooks:run_fold(
 			   store_mam_message, ServerHost, Msg2,
 			   [Chan, Host, BFrom, Nick, groupchat, recv]) of
